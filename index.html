@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HSK4 Chinese AR Office Work Game</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Mali:wght@400;600;700&family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Mali', 'Kanit', sans-serif; user-select: none; }
+        .glass { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); }
+        .glass-dark { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(10px); }
+        canvas { transform: scaleX(-1); } /* Mirror effect for webcam */
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-800 overflow-hidden min-h-screen">
+
+    <!-- Loading Screen -->
+    <div id="loading" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-900 text-white">
+        <div class="animate-spin rounded-full h-16 w-16 border-4 border-amber-400 border-t-transparent mb-4"></div>
+        <p class="text-xl font-bold tracking-wide">กำลังโหลดระบบ AR และกล้องเว็บแคม...</p>
+        <p class="text-sm text-slate-400 mt-2">โปรดอนุญาตให้ใช้งานกล้องเมื่อมีป๊อปอัพขึ้นเตือน</p>
+    </div>
+
+    <!-- Hidden Video Element for MediaPipe -->
+    <video id="webcam" class="hidden" playsinline></video>
+
+    <!-- Main Game View -->
+    <div class="relative w-screen h-screen overflow-hidden">
+        <!-- Canvas for Camera + AR Rendering -->
+        <canvas id="gameCanvas" class="absolute inset-0 w-full h-full object-cover"></canvas>
+
+        <!-- Top HUD Panel -->
+        <div class="absolute top-4 left-1/2 -translate-x-1/2 w-[92%] max-w-2xl glass rounded-2xl p-4 shadow-xl z-10 flex flex-col items-center border border-white/40">
+            <div class="text-xs font-bold text-amber-600 tracking-wider uppercase mb-1">คำแปลภารกิจภาษาไทย</div>
+            <div id="targetTH" class="text-2xl sm:text-3xl font-extrabold text-slate-900 text-center tracking-wide">
+                ---
+            </div>
+            <div class="w-full flex justify-between items-center mt-3 pt-2 border-t border-slate-200/60 text-sm sm:text-base font-semibold">
+                <div class="flex items-center gap-2">
+                    <span>⏳ เวลา:</span>
+                    <span id="timerText" class="text-amber-600 font-bold text-lg">60</span> สก
+                </div>
+                <div class="flex items-center gap-2">
+                    <span>🏆 คะแนน:</span>
+                    <span id="scoreText" class="text-emerald-600 font-bold text-lg">0</span> / 100
+                </div>
+            </div>
+        </div>
+
+        <!-- Start Overlay -->
+        <div id="startOverlay" class="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm">
+            <div class="glass max-w-md w-11/12 p-8 rounded-3xl text-center shadow-2xl border border-white/50">
+                <div class="text-5xl mb-4">🧺</div>
+                <h1 class="text-2xl font-bold text-slate-900 mb-2">เกมเก็บคำศัพท์ HSK4 AR</h1>
+                <p class="text-sm text-slate-600 mb-6 leading-relaxed">
+                    ใช้มือทำท่า <b>"จีบนิ้ว" (Pinch)</b> เพื่อคีบคำศัพท์ภาษาจีนที่โปรยลงมา แล้วลากไปวางใน <b>ตะกร้า 🧺</b> ให้ตรงกับคำแปลภาษาไทยด้านบนสุด!
+                </p>
+                <button id="startBtn" onclick="startGame()" disabled class="w-full py-4 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-400 text-white font-bold rounded-xl shadow-lg transition-all text-lg tracking-wide">
+                    พร้อมแล้ว! เริ่มเกมเลย
+                </button>
+            </div>
+        </div>
+
+        <!-- End Game Modal -->
+        <div id="endModal" class="hidden absolute inset-0 z-30 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
+            <div class="glass max-w-xl w-full max-h-[90vh] rounded-3xl p-6 shadow-2xl overflow-y-auto flex flex-col items-center text-center border border-white/60">
+                
+                <!-- Cheer Character Image -->
+                <img id="cheerImg" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRmhp-UAgvW5mREvFdiNIBJWfA499sKulCcnn8pbA3Qs0Yo2Iw&s" alt="Cheering" class="h-32 object-contain mb-3 drop-shadow-md">
+
+                <h2 id="endTitle" class="text-2xl font-extrabold text-slate-900 mb-1">การแข่งขันจบลงแล้ว!</h2>
+                <div id="endMessage" class="text-amber-600 font-bold text-lg mb-4">---</div>
+
+                <div class="bg-white/80 rounded-2xl p-4 w-full mb-4 shadow-inner border border-slate-200">
+                    <div class="text-xs text-slate-500 font-bold uppercase mb-1">คะแนนรวมที่ได้</div>
+                    <div id="finalScore" class="text-4xl font-extrabold text-emerald-600">0 / 100</div>
+                </div>
+
+                <!-- Match Review List -->
+                <div class="w-full text-left mb-6">
+                    <h3 class="text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                        <span>📋 สรุปรายการคำศัพท์ (ถูก/ผิด):</span>
+                    </h3>
+                    <div id="reviewList" class="space-y-2 max-h-48 overflow-y-auto pr-1 text-sm">
+                        <!-- Items populated dynamically -->
+                    </div>
+                </div>
+
+                <button onclick="location.reload()" class="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-md transition-all text-base">
+                    🔄 เล่นอีกครั้ง
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Game Vocabulary Database (40 HSK4 Words mapped to standard flashcards)
+        const VOCAB_LIST = [
+            // 1. Communication & Admin (Blue)
+            { zh: '联系', py: 'liánxì', th: 'ติดต่อ' },
+            { zh: '回复', py: 'huífù', th: 'ตอบกลับ' },
+            { zh: '转发', py: 'zhuǎnfā', th: 'ส่งต่อ' },
+            { zh: '确认', py: 'quèrèn', th: 'ยืนยัน' },
+            { zh: '讨论', py: 'tǎolùn', th: 'อภิปราย' },
+            { zh: '建议', py: 'jiànyì', th: 'ข้อเสนอแนะ' },
+            { zh: '项目', py: 'xiàngmù', th: 'โครงการ' },
+            { zh: '计划', py: 'jìhuà', th: 'แผนงาน' },
+            { zh: '截止日期', py: 'jiézhǐ rìqī', th: 'กำหนดส่ง' },
+            { zh: '目标', py: 'mùbiāo', th: 'เป้าหมาย' },
+            
+            // 2. Places & Departments (Red)
+            { zh: '办公室', py: 'bàngǒngshì', th: 'สำนักงาน' },
+            { zh: '公司', py: 'gongsī', th: 'บริษัท' },
+            { zh: '会议室', py: 'Huìyìshì', th: 'ห้องประชุม' },
+            { zh: '部门', py: 'bùmén', th: 'แผนก' },
+            { zh: '管理部', py: 'guǎnlǐ bù', th: 'ฝ่ายบริหาร' },
+            { zh: '市场部', py: 'shìchǎng bù', th: 'ฝ่ายการตลาด' },
+            { zh: '人事部', py: 'rénshì bù', th: 'ฝ่ายบุคคล (HR)' },
+            { zh: '会计部', py: 'kuàijì bù', th: 'ฝ่ายบัญชี' },
+            { zh: '销售部', py: 'xiāoshòu bù', th: 'ฝ่ายขาย / เซลล์' },
+            { zh: '技术部', py: 'jìshù bù', th: 'ฝ่ายไอที / เทคนิค' },
+
+            // 3. Personnel & Roles (Yellow)
+            { zh: '同事', py: 'tóngshì', th: 'เพื่อนร่วมงาน' },
+            { zh: '客户', py: 'kèhù', th: 'ลูกค้า' },
+            { zh: '首席执行官', py: 'shǒu xī zhí xíng guān', th: 'CEO' },
+            { zh: '总裁', py: 'zǒngcái', th: 'ประธาน' },
+            { zh: '副总裁', py: 'fù zǒngcái', th: 'รองประธาน' },
+            { zh: '企业家', py: 'qǐ yè jiā', th: 'นักธุรกิจ' },
+            { zh: '部门主管', py: 'shǒu xī zhí xíng guān', th: 'หัวหน้าแผนก' },
+            { zh: '经理', py: 'jīnglǐ', th: 'ผู้จัดการ' },
+            { zh: '副经理', py: 'fù jīnglǐ', th: 'รองผู้จัดการ' },
+            { zh: '员工', py: 'yuángōng', th: 'พนักงาน' },
+
+            // 4. Documents & Equipment (Green)
+            { zh: '文件', py: 'wénjiàn', th: 'เอกสาร' },
+            { zh: '资料', py: 'zīliào', th: 'ข้อมูล / เอกสารประกอบ' },
+            { zh: '合同', py: 'hétong', th: 'สัญญา' },
+            { zh: '报告', py: 'bàogào', th: 'รายงาน' },
+            { zh: '表格', py: 'biǎogé', th: 'ตาราง / แบบฟอร์ม' },
+            { zh: '附件', py: 'fùjiàn', th: 'ไฟล์แนบ' },
+            { zh: '内容', py: 'nèiróng', th: 'เนื้อหา' },
+            { zh: '电脑', py: 'diànnǎo', th: 'คอมพิวเตอร์' },
+            { zh: '电话', py: 'diànhuà', th: 'โทรศัพท์' },
+            { zh: '打印机', py: 'dǎyìnjī', th: 'เครื่องถ่ายเอกสาร' }
+        ];
+
+        // Canvas & Context Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const video = document.getElementById('webcam');
+
+        // State variables
+        let width = window.innerWidth;
+        let height = window.innerHeight;
+        let isGameRunning = false;
+        let score = 0;
+        let timer = 60;
+        let timerInterval = null;
+        let currentTarget = null;
+        let fallingCards = [];
+        let matchHistory = [];
+        let floatFeedbacks = [];
+
+        // Track hands
+        let handsData = [];
+
+        // Helper Rounded Rect function
+        function rr(ctx, x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r);
+            ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+        }
+
+        // Web Audio API Sfx Synthesizer
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            const now = audioCtx.currentTime;
+            if (type === 'correct') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(523.25, now); // C5
+                osc.frequency.exponentialRampToValueAtTime(659.25, now + 0.15); // E5
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                osc.start(now);
+                osc.stop(now + 0.3);
+            } else if (type === 'wrong') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.linearRampToValueAtTime(110, now + 0.2);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+                osc.start(now);
+                osc.stop(now + 0.35);
+            } else if (type === 'fanfare') {
+                // Finish Line Fanfare Horn
+                const notes = [261.63, 329.63, 392.00, 523.25];
+                notes.forEach((freq, idx) => {
+                    const o = audioCtx.createOscillator();
+                    const g = audioCtx.createGain();
+                    o.type = 'triangle';
+                    o.frequency.setValueAtTime(freq, now + idx * 0.12);
+                    g.gain.setValueAtTime(0.2, now + idx * 0.12);
+                    g.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.4);
+                    o.connect(g);
+                    g.connect(audioCtx.destination);
+                    o.start(now + idx * 0.12);
+                    o.stop(now + idx * 0.12 + 0.4);
+                });
+            }
+        }
+
+        function resizeCanvas() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // MediaPipe Hands Init
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults((results) => {
+            handsData = results.multiHandLandmarks || [];
+        });
+
+        const cameraUtils = new Camera(video, {
+            onFrame: async () => {
+                try {
+                    await hands.send({ image: video });
+                } catch (e) {
+                    console.error(e);
+                }
+            },
+            width: 1280,
+            height: 720
+        });
+
+        cameraUtils.start().then(() => {
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('startBtn').disabled = false;
+        });
+
+        // Set Target Word
+        function setTargetWord() {
+            const randomItem = VOCAB_LIST[Math.floor(Math.random() * VOCAB_LIST.length)];
+            currentTarget = randomItem;
+            document.getElementById('targetTH').innerText = `${currentTarget.th}`;
+        }
+
+        // Card Spawning Logic
+        function spawnCard() {
+            if (!isGameRunning) return;
+            const useTarget = Math.random() < 0.4;
+            const item = useTarget ? currentTarget : VOCAB_LIST[Math.floor(Math.random() * VOCAB_LIST.length)];
+
+            fallingCards.push({
+                ...item,
+                x: Math.random() * (width - 160) + 80,
+                y: -60,
+                vy: 1.5 + Math.random() * 1.2,
+                w: 110,
+                h: 55,
+                isGrabbed: false,
+                grabbedBy: null
+            });
+        }
+
+        // Start Game
+        function startGame() {
+            document.getElementById('startOverlay').classList.add('hidden');
+            score = 0;
+            timer = 60;
+            matchHistory = [];
+            fallingCards = [];
+            floatFeedbacks = [];
+            isGameRunning = true;
+            document.getElementById('scoreText').innerText = score;
+            document.getElementById('timerText').innerText = timer;
+
+            setTargetWord();
+
+            clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                timer--;
+                document.getElementById('timerText').innerText = timer;
+                if (timer <= 0) {
+                    endGame();
+                }
+            }, 1000);
+
+            setInterval(() => {
+                if (isGameRunning && fallingCards.length < 5) {
+                    spawnCard();
+                }
+            }, 1600);
+        }
+
+        // End Game
+        function endGame() {
+            isGameRunning = false;
+            clearInterval(timerInterval);
+            playSound('fanfare');
+
+            document.getElementById('endModal').classList.remove('hidden');
+            document.getElementById('finalScore').innerText = `${score} / 100`;
+
+            const endMessage = document.getElementById('endMessage');
+            if (score >= 50) {
+                endMessage.innerText = "เก่งมาก เอาไปเลยสองนิ้วโป้ง 👍👍";
+                endMessage.className = "text-emerald-600 font-bold text-lg mb-4";
+            } else {
+                endMessage.innerText = "ไม่เป็นไรนะ ครั้งหน้าเอาใหม่ ✌️";
+                endMessage.className = "text-amber-600 font-bold text-lg mb-4";
+            }
+
+            const reviewList = document.getElementById('reviewList');
+            reviewList.innerHTML = matchHistory.length === 0 ? '<div class="text-slate-400 italic">ไม่มีรายการคำศัพท์</div>' : '';
+
+            matchHistory.forEach(item => {
+                const div = document.createElement('div');
+                div.className = `p-2.5 rounded-xl flex items-center justify-between font-semibold ${item.isCorrect ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : 'bg-rose-100 text-rose-900 border border-rose-300'}`;
+                div.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="text-base">${item.isCorrect ? '✅' : '❌'}</span>
+                        <span>${item.zh} (${item.py})</span>
+                    </div>
+                    <div class="text-xs text-slate-600">${item.th}</div>
+                `;
+                reviewList.appendChild(div);
+            });
+        }
+
+        // Main Render Loop
+        function drawLoop() {
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. Render Mirror Video Stream
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, -width, 0, width, height);
+            ctx.restore();
+
+            // Basket Properties (Bottom Center)
+            const basketW = 180;
+            const basketH = 90;
+            const basketX = width / 2 - basketW / 2;
+            const basketY = height - basketH - 20;
+
+            if (isGameRunning) {
+                // 2. Process Hand Tracking
+                const activePinches = [];
+
+                handsData.forEach((hand) => {
+                    // Index Tip (8) and Thumb Tip (4)
+                    const index = hand[8];
+                    const thumb = hand[4];
+                    const palm = hand[9]; // Middle MCP for palm center
+
+                    // Canvas mirrored coordinates
+                    const ix = (1 - index.x) * width;
+                    const iy = index.y * height;
+                    const tx = (1 - thumb.x) * width;
+                    const ty = thumb.y * height;
+                    const px = (1 - palm.x) * width;
+                    const py = palm.y * height;
+
+                    // Distance formula (Pythagoras) for Pinch Gesture
+                    const dist = Math.sqrt((ix - tx) ** 2 + (iy - ty) ** 2);
+                    const isPinching = dist < 55;
+
+                    // Draw Palm Connection Point (Orange Marker)
+                    ctx.beginPath();
+                    ctx.arc(px, py, 14, 0, Math.PI * 2);
+                    ctx.fillStyle = isPinching ? '#f97316' : '#fb923c';
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    if (isPinching) {
+                        const pinchX = (ix + tx) / 2;
+                        const pinchY = (iy + ty) / 2;
+                        activePinching = true;
+                        activePinches.push({ x: pinchX, y: pinchY });
+
+                        // Pinch Visual Marker
+                        ctx.beginPath();
+                        ctx.arc(pinchX, pinchY, 20, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(249, 115, 22, 0.4)';
+                        ctx.fill();
+                    }
+                });
+
+                // 3. Update Cards Position and Drag Logic
+                for (let i = fallingCards.length - 1; i >= 0; i--) {
+                    const card = fallingCards[i];
+
+                    if (!card.isGrabbed) {
+                        card.y += card.vy;
+
+                        // Check for Pinch Grab
+                        for (let p of activePinches) {
+                            const d = Math.sqrt((card.x - p.x) ** 2 + (card.y - p.y) ** 2);
+                            if (d < 80) { // Magnet / Snap Grab radius
+                                card.isGrabbed = true;
+                                card.grabbedBy = p;
+                                break;
+                            }
+                        }
+                    } else {
+                        // Follow pinch cursor position
+                        card.x = card.grabbedBy.x;
+                        card.y = card.grabbedBy.y;
+
+                        // Check Drop into Basket
+                        if (card.x > basketX && card.x < basketX + basketW && card.y > basketY && card.y < basketY + basketH) {
+                            const isCorrect = card.zh === currentTarget.zh;
+
+                            if (isCorrect) {
+                                score = Math.min(100, score + 10);
+                                playSound('correct');
+                                floatFeedbacks.push({ text: '✅ ถูกต้อง! +10', x: card.x, y: card.y, color: '#10b981', alpha: 1 });
+                            } else {
+                                playSound('wrong');
+                                floatFeedbacks.push({ text: '❌ ผิดข้อ!', x: card.x, y: card.y, color: '#ef4444', alpha: 1 });
+                            }
+
+                            matchHistory.unshift({ zh: card.zh, py: card.py, th: card.th, isCorrect });
+                            document.getElementById('scoreText').innerText = score;
+
+                            if (isCorrect) setTargetWord();
+
+                            fallingCards.splice(i, 1);
+                            continue;
+                        }
+                    }
+
+                    // Remove Cards falling past screen (NO Score Penalties)
+                    if (card.y > height + 60) {
+                        fallingCards.splice(i, 1);
+                        continue;
+                    }
+
+                    // Render Cards
+                    ctx.save();
+                    ctx.translate(card.x, card.y);
+
+                    rr(ctx, -card.w / 2, -card.h / 2, card.w, card.h, 12);
+                    ctx.fillStyle = card.isGrabbed ? '#fef3c7' : '#ffffff';
+                    ctx.fill();
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeStyle = card.isGrabbed ? '#f59e0b' : '#0284c7';
+                    ctx.stroke();
+
+                    // Chinese Characters
+                    ctx.fillStyle = '#0f172a';
+                    ctx.font = 'bold 18px Mali, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(card.zh, 0, -2);
+
+                    // Pinyin
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = '11px Kanit, sans-serif';
+                    ctx.fillText(card.py, 0, 16);
+
+                    ctx.restore();
+                }
+
+                // 4. Render 🧺 Basket at Bottom Center
+                ctx.save();
+                ctx.translate(basketX + basketW / 2, basketY + basketH / 2);
+
+                rr(ctx, -basketW / 2, -basketH / 2, basketW, basketH, 20);
+                ctx.fillStyle = 'rgba(217, 119, 6, 0.85)';
+                ctx.fill();
+                ctx.lineWidth = 4;
+                ctx.strokeStyle = '#fef3c7';
+                ctx.stroke();
+
+                ctx.font = '36px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🧺', 0, -10);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 16px Mali, sans-serif';
+                ctx.fillText('วางตะกร้าที่นี่', 0, 24);
+                ctx.restore();
+
+                // 5. Render Floating Feedbacks
+                for (let i = floatFeedbacks.length - 1; i >= 0; i--) {
+                    const fb = floatFeedbacks[i];
+                    ctx.save();
+                    ctx.globalAlpha = fb.alpha;
+                    ctx.fillStyle = fb.color;
+                    ctx.font = 'bold 22px Mali, sans-serif';
+                    ctx.fillText(fb.text, fb.x - 40, fb.y);
+                    ctx.restore();
+
+                    fb.y -= 1.5;
+                    fb.alpha -= 0.02;
+                    if (fb.alpha <= 0) floatFeedbacks.splice(i, 1);
+                }
+            }
+
+            requestAnimationFrame(drawLoop);
+        }
+
+        // Start Loop
+        requestAnimationFrame(drawLoop);
+    </script>
+</body>
+</html>
